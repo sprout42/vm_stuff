@@ -1,0 +1,115 @@
+./build.sh -s 100G yocto ubuntu-16.04
+
+virsh start --console yocto
+
+curl https://storage.googleapis.com/git-repo-downloads/repo > ~/.local/bin/repo
+chmod a+x ~/.local/bin/repo
+
+git clone https://github.com/pyenv/pyenv.git ~/.pyenv
+echo 'export PYENV_ROOT="$HOME/.pyenv"' >> ~/.bashrc
+echo 'command -v pyenv >/dev/null || export PATH="$PYENV_ROOT/bin:$PATH"' >> ~/.bashrc
+echo 'eval "$(pyenv init -)"' >> ~/.bashrc
+
+(log out and back in)
+
+# Required for pyenv build
+sudo apt-get update; sudo apt-get install make build-essential libssl-dev zlib1g-dev libbz2-dev libreadline-dev libsqlite3-dev wget curl llvm libncursesw5-dev xz-utils tk-dev libxml2-dev libxmlsec1-dev libffi-dev liblzma-dev
+
+pyenv install 3.9.13
+pyenv global 3.9.13
+
+
+# Required for yocto
+sudo apt-get install texinfo chrpath diffstat gawk python2.7
+# because no python2 executable? (weird)
+sudo update-alternatives --install /usr/bin/python2 python2 /usr/bin/python2.7 10
+
+
+mkdir -p work/release
+cd work/release
+repo init -u https://source.codeaurora.org/external/imx/imx-manifest -b imx-linux-zeus -m imx-5.4.70-2.3.0.xml
+repo sync
+MACHINE=imx8dxlevk DISTRO=fsl-imx-wayland source ./imx-setup-release.sh -b build
+
+
+cat <<EOF >> conf/local.conf
+
+EXTRA_IMAGE_FEATURES_append = " dev-pkgs tools-sdk tools-debug "
+IMAGE_INSTALL_append = " git "
+EOF
+
+bitbake imx-image-core
+
+# needed to widen console to get proper output
+
+To get this to work:
+bitbake imx-image-core -c populate_sdk
+
+comment out the following in conf/local.conf:
+
+PACKAGE_CLASSES = "package_deb" in local.conf
+EXTRA_IMAGE_FEATURES += "package-management"
+
+sudo apt install python3-xcbgen python3-xcbgen xcb-proto
+pyenv global system
+
+sudo apt install python3-pip
+pip3 install fractions
+
+
+
+-----------------------------------
+
+MACHINE ??= 'imx8dxlevk'
+DISTRO ?= 'fsl-imx-wayland'
+PACKAGE_CLASSES ?= 'package_rpm'
+EXTRA_IMAGE_FEATURES ?= "debug-tweaks"
+USER_CLASSES ?= "buildstats image-mklibs image-prelink"
+PATCHRESOLVE = "noop"
+BB_DISKMON_DIRS ??= "\
+    STOPTASKS,${TMPDIR},1G,100K \
+    STOPTASKS,${DL_DIR},1G,100K \
+    STOPTASKS,${SSTATE_DIR},1G,100K \
+    STOPTASKS,/tmp,100M,100K \
+    ABORT,${TMPDIR},100M,1K \
+    ABORT,${DL_DIR},100M,1K \
+    ABORT,${SSTATE_DIR},100M,1K \
+    ABORT,/tmp,10M,1K"
+PACKAGECONFIG_append_pn-qemu-system-native = " sdl"
+CONF_VERSION = "1"
+
+DL_DIR ?= "${BSPDIR}/downloads/"
+ACCEPT_FSL_EULA = "1"
+
+# Switch to Debian packaging and include package-management in the image
+#PACKAGE_CLASSES = "package_deb"
+#EXTRA_IMAGE_FEATURS += "package-management"
+EXTRA_IMAGE_FEATURES_append = " dev-pkgs tools-sdk tools-debug "
+IMAGE_INSTALL_append = " git "
+
+
+-----------------------------------
+
+cd tmp/deploy/sdk
+./fsl-imx-wayland-glibc-x86_64-imx-image-core-aarch64-imx8dxlevk-toolchain-5.4-zeus.sh
+
+. /opt/fsl-imx-wayland/5.4-zeus/environment-setup-aarch64-poky-linux
+
+cd ~/work
+git clone https://source.codeaurora.org/external/imxsupport/imx_sec_apps.git
+cd imx-sec-apps/hsm_she_examples
+
+edit Makefile:
+add SECO_LIBS_DIR
+    SECO_LIBS_DIR = $HOME/work/release/build/tmp/sysroots-components/aarch64/imx-seco-libs
+
+add "-O2" to CFLAGS
+    CFLAGS = -Werror -O2
+
+
+edit she/she_test.c:
+fix printf line
+    printf("she_open_session handle:0x%lx\n", (intptr_t)sess_hdl);
+
+
+make all DEBUG=y
